@@ -1,201 +1,187 @@
 #include <Windows.h>
 #include <iostream>
-#include <string>
-#include <vector>
-#include <TlHelp32.h>
-#include <cmath>
+#include <thread>
+#include <atomic>
 
-#define UWorld 0x169641B8       // Your UWorld offset
-#define PlayerArray 0x2C0       // Player list offset
-#define Mesh 0x328              // Mesh offset
-#define BoneArray 0x5A8         // Bone array offset
-#define COMPONENT_TO_WORLD 0x1E0 // World position offset
-#define SCREEN_WIDTH 1920       // Screen width (adjust as per your resolution)
-#define SCREEN_HEIGHT 1080      // Screen height (adjust as per your resolution)
+// === Offsets (YOUR GAME) ===
+#define ROOT_COMPONENT 0x1B0
+#define VELOCITY 0x180
+#define LOCAL_PAWN 0x350
+#define UWORLD 0x169641B8
+#define GAME_INSTANCE 0x218
+#define LOCAL_PLAYERS 0x38
+#define PLAYER_CONTROLLER 0x30
+#define PLAYER_STATE 0x2C8
+#define TEAM_INDEX 0x1259
+#define DISPLAY_NAME 0x40
+#define MESH 0x328
+#define BONE_ARRAY 0x5A8
+#define BONE_ARRAY_CACHE 0x5B8
+#define RELATIVE_LOCATION 0x138
 
-#define TEAM_INDEX 0x1259       // Team index offset
-#define DISPLAY_NAME 0x40       // Display name offset
+// === Your Process and ReadMemory/WriteMemory functions ===
+uintptr_t GetGameProcessID(const wchar_t* windowName);
+uintptr_t GetModuleBaseAddress(uintptr_t procId, const wchar_t* modName);
+template <typename T> T ReadMemory(uintptr_t address);
+template <typename T> void WriteMemory(uintptr_t address, T value);
 
-// Struct to hold bone info
-struct Bone {
-    float x, y, z;
-};
+// === Global Flags ===
+std::atomic<bool> espEnabled(false);
+std::atomic<bool> aimbotEnabled(false);
+std::atomic<bool> flyEnabled(false);
+std::atomic<bool> rapidFireEnabled(false);
 
-// Utility function to read memory (simplified)
-template<typename T>
-T ReadMemory(uintptr_t address) {
-    T value;
-    ReadProcessMemory(GetCurrentProcess(), (LPCVOID)address, &value, sizeof(T), nullptr);
-    return value;
-}
-
-// Utility function to write memory (simplified)
-template<typename T>
-void WriteMemory(uintptr_t address, T value) {
-    WriteProcessMemory(GetCurrentProcess(), (LPVOID)address, &value, sizeof(T), nullptr);
-}
-
-// Function to get the process ID by the window title
-DWORD GetProcessIdByWindowName(const std::wstring& windowName) {
-    HWND hwnd = FindWindowW(NULL, windowName.c_str());
-    if (!hwnd) return 0;
-
-    DWORD pid;
-    GetWindowThreadProcessId(hwnd, &pid);
-    return pid;
-}
-
-// Function to get the closest player (in this case, using the head bone)
-uintptr_t GetClosestPlayer(uintptr_t playerArray, float* myPosition) {
-    float closestDist = FLT_MAX;
-    uintptr_t closestPlayer = 0;
-
-    for (int i = 0; i < 50; ++i) {  // Assuming 50 players max
-        uintptr_t playerBase = ReadMemory<uintptr_t>(playerArray + i * sizeof(uintptr_t));
-        if (playerBase == 0) continue;
-
-        uintptr_t meshPtr = ReadMemory<uintptr_t>(playerBase + Mesh);
-        uintptr_t boneArray = ReadMemory<uintptr_t>(meshPtr + BoneArray);
-        
-        Bone headBone = ReadMemory<Bone>(boneArray + 67 * sizeof(Bone));  // Head is usually bone ID 67
-        
-        float screenPos[2];
-        float worldPos[3] = { headBone.x, headBone.y, headBone.z };
-        float matrix[16];  // You'll need to read the view matrix (or use your camera info)
-        
-        if (WorldToScreen(worldPos, screenPos, matrix)) {
-            float dist = sqrt(pow(screenPos[0] - SCREEN_WIDTH / 2, 2) + pow(screenPos[1] - SCREEN_HEIGHT / 2, 2));
-            if (dist < closestDist) {
-                closestDist = dist;
-                closestPlayer = playerBase;
-            }
+// === ESP Code ===
+void ESP(uintptr_t baseAddress) {
+    while (true) {
+        if (!espEnabled) {
+            Sleep(100);
+            continue;
         }
+
+        // Loop through all players in the game and draw ESP (simplified, depends on your game)
+        // For now, you can implement drawing on screen based on player positions
+
+        Sleep(10);
     }
-    return closestPlayer;
 }
 
-// Function to move the mouse to a given screen position
-void MoveMouse(int x, int y) {
-    SetCursorPos(x, y);  // Set the mouse position
-}
-
-// Function to convert world position to 2D screen position (simplified)
-bool WorldToScreen(const float* worldPosition, float* screenPosition, float* matrix) {
-    // Multiply world position by the view matrix (simplified)
-    screenPosition[0] = matrix[0] * worldPosition[0] + matrix[1] * worldPosition[1] + matrix[2] * worldPosition[2] + matrix[3];
-    screenPosition[1] = matrix[4] * worldPosition[0] + matrix[5] * worldPosition[1] + matrix[6] * worldPosition[2] + matrix[7];
-    return true;
-}
-
-// Function to calculate the angle between two points (simplified for 2D)
-float CalculateAngle(float x1, float y1, float x2, float y2) {
-    return atan2(y2 - y1, x2 - x1) * (180.0f / 3.14159265358979323846f);  // Angle in degrees
-}
-
-// Main aimbot function
-void Aimbot(uintptr_t uWorld, uintptr_t gameState, uintptr_t playerArray) {
-    // Get my own position (this is an example, you'll need to get your player base)
-    uintptr_t localPlayer = ReadMemory<uintptr_t>(uWorld + 0x38);  // LocalPlayer
-    uintptr_t meshPtr = ReadMemory<uintptr_t>(localPlayer + Mesh);
-    uintptr_t boneArray = ReadMemory<uintptr_t>(meshPtr + BoneArray);
-    Bone myHead = ReadMemory<Bone>(boneArray + 67 * sizeof(Bone));  // Local player head position
-
-    // Get the closest player to aim at
-    uintptr_t closestPlayer = GetClosestPlayer(playerArray, &myHead.x);
-
-    if (closestPlayer != 0) {
-        // Get the position of the closest player's head
-        uintptr_t meshPtr = ReadMemory<uintptr_t>(closestPlayer + Mesh);
-        uintptr_t boneArray = ReadMemory<uintptr_t>(meshPtr + BoneArray);
-        Bone headBone = ReadMemory<Bone>(boneArray + 67 * sizeof(Bone));  // Head is usually bone ID 67
-
-        // Calculate the angle to the head position
-        float screenPos[2];
-        float worldPos[3] = { headBone.x, headBone.y, headBone.z };
-        float matrix[16];  // Get view matrix
-
-        if (WorldToScreen(worldPos, screenPos, matrix)) {
-            // Calculate angle between the crosshair (screen center) and the target
-            float angle = CalculateAngle(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, screenPos[0], screenPos[1]);
-
-            // Move mouse to the target (simplified for now)
-            MoveMouse(screenPos[0], screenPos[1]);
+// === Aimbot Code ===
+void Aimbot(uintptr_t baseAddress) {
+    while (true) {
+        if (!aimbotEnabled) {
+            Sleep(100);
+            continue;
         }
+
+        // Aimbot logic (simplified)
+        // Find closest player and snap to head (this is where you will calculate bone position)
+        // Implement aiming mechanics with memory write for rotation (yaw/pitch)
+
+        Sleep(10);
     }
 }
 
-// Function to draw ESP boxes (simplified)
-void DrawESP(uintptr_t uWorld, uintptr_t gameState, uintptr_t playerArray) {
-    for (int i = 0; i < 50; ++i) {  // Assuming 50 players max
-        uintptr_t playerBase = ReadMemory<uintptr_t>(playerArray + i * sizeof(uintptr_t));
-        if (playerBase == 0) continue;
-
-        uintptr_t meshPtr = ReadMemory<uintptr_t>(playerBase + Mesh);
-        uintptr_t boneArray = ReadMemory<uintptr_t>(meshPtr + BoneArray);
-
-        Bone headBone = ReadMemory<Bone>(boneArray + 67 * sizeof(Bone));  // Head is usually bone ID 67
-        
-        float screenPos[2];
-        float worldPos[3] = { headBone.x, headBone.y, headBone.z };
-        float matrix[16];  // Get view matrix
-
-        if (WorldToScreen(worldPos, screenPos, matrix)) {
-            // Draw a simple box around the player (this is a simplified version)
-            // You would replace this with actual drawing logic (like using DirectX or OpenGL to draw)
-            std::cout << "Player at: " << screenPos[0] << ", " << screenPos[1] << std::endl;
+// === Fly Hack Code ===
+void FlyVehicle(uintptr_t baseAddress) {
+    while (true) {
+        if (!flyEnabled) {
+            Sleep(100);
+            continue;
         }
+
+        uintptr_t localPawn = GetLocalPawn(baseAddress);
+        if (localPawn == 0) {
+            Sleep(100);
+            continue;
+        }
+
+        uintptr_t rootComponent = ReadMemory<uintptr_t>(localPawn + ROOT_COMPONENT);
+        if (rootComponent == 0) {
+            Sleep(100);
+            continue;
+        }
+
+        float flySpeed = 1500.0f;
+        float velocity[3] = { 0, 0, 0 };
+
+        if (GetAsyncKeyState('W') & 0x8000) {
+            velocity[1] += flySpeed; // Forward
+        }
+        if (GetAsyncKeyState('S') & 0x8000) {
+            velocity[1] -= flySpeed; // Backward
+        }
+        if (GetAsyncKeyState('A') & 0x8000) {
+            velocity[0] -= flySpeed; // Left
+        }
+        if (GetAsyncKeyState('D') & 0x8000) {
+            velocity[0] += flySpeed; // Right
+        }
+        if (GetAsyncKeyState(VK_SPACE) & 0x8000) {
+            velocity[2] += flySpeed; // Up
+        }
+        if (GetAsyncKeyState(VK_SHIFT) & 0x8000) {
+            velocity[2] -= flySpeed; // Down
+        }
+
+        WriteMemory(rootComponent + VELOCITY, velocity);
+
+        Sleep(10);
     }
 }
 
-// Function to inject the aimbot and ESP code
-void InjectAimbotAndESP(DWORD pid) {
-    HANDLE hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
-    if (!hProcess) {
-        std::cerr << "Failed to open process!" << std::endl;
-        return;
+// === Rapid Fire Code ===
+void RapidFire(uintptr_t baseAddress) {
+    while (true) {
+        if (!rapidFireEnabled) {
+            Sleep(100);
+            continue;
+        }
+
+        // Rapid fire logic (you would need to write to the weapon firing address)
+        // For now, you can simulate the rapid fire by triggering weapon fire more frequently.
+
+        Sleep(10);
     }
-
-    // Allocate memory for the aimbot and ESP code in the game process
-    LPVOID allocatedMemory = VirtualAllocEx(hProcess, NULL, sizeof(Aimbot), MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-    if (!allocatedMemory) {
-        std::cerr << "Failed to allocate memory in target process!" << std::endl;
-        return;
-    }
-
-    // Write the aimbot and ESP code into the allocated memory
-    BOOL success = WriteProcessMemory(hProcess, allocatedMemory, (LPVOID)&Aimbot, sizeof(Aimbot), NULL);
-    if (!success) {
-        std::cerr << "Failed to write memory!" << std::endl;
-        return;
-    }
-
-    // Create a remote thread to run the aimbot and ESP code
-    CreateRemoteThread(hProcess, NULL, 0, (LPTHREAD_START_ROUTINE)allocatedMemory, NULL, 0, NULL);
-
-    std::cout << "Aimbot and ESP injected!" << std::endl;
-    CloseHandle(hProcess);
 }
 
+// === Get LocalPawn ===
+uintptr_t GetLocalPawn(uintptr_t baseAddress) {
+    uintptr_t uworld = ReadMemory<uintptr_t>(baseAddress + UWORLD);
+    if (!uworld) return 0;
+
+    uintptr_t gameInstance = ReadMemory<uintptr_t>(uworld + GAME_INSTANCE);
+    uintptr_t localPlayers = ReadMemory<uintptr_t>(gameInstance + LOCAL_PLAYERS);
+    uintptr_t playerController = ReadMemory<uintptr_t>(localPlayers + PLAYER_CONTROLLER);
+    uintptr_t localPawn = ReadMemory<uintptr_t>(playerController + LOCAL_PAWN);
+
+    return localPawn;
+}
+
+// === Main ===
 int main() {
-    std::wstring gameWindowName = L"GameName";  // Replace with your game's window name
-    DWORD pid = GetProcessIdByWindowName(gameWindowName);
-    if (pid == 0) {
-        std::cerr << "Game window not found!" << std::endl;
+    const wchar_t* windowName = L"Fortnite"; // <<< Replace with your game's window name
+    uintptr_t processID = GetGameProcessID(windowName);
+    uintptr_t baseAddress = GetModuleBaseAddress(processID, L"FortniteClient-Win64-Shipping.exe"); // <<< Replace with your game exe
+
+    if (processID == 0 || baseAddress == 0) {
+        std::cout << "Game not found!" << std::endl;
         return 1;
     }
 
-    uintptr_t uWorld = ReadMemory<uintptr_t>(UWorld);
-    uintptr_t gameState = ReadMemory<uintptr_t>(uWorld + 0x1A0);  // GameState
-    uintptr_t playerArray = ReadMemory<uintptr_t>(gameState + PlayerArray);
+    std::cout << "Loaded! Press the keys to toggle features." << std::endl;
 
-    // Inject the code
-    InjectAimbotAndESP(pid);
+    // Start threads for each feature
+    std::thread espThread(ESP, baseAddress);
+    std::thread aimbotThread(Aimbot, baseAddress);
+    std::thread flyThread(FlyVehicle, baseAddress);
+    std::thread rapidFireThread(RapidFire, baseAddress);
 
-    // Main game loop for aimbot and ESP
+    espThread.detach();
+    aimbotThread.detach();
+    flyThread.detach();
+    rapidFireThread.detach();
+
+    // Toggle controls
     while (true) {
-        Aimbot(uWorld, gameState, playerArray);  // Aimbot function
-        DrawESP(uWorld, gameState, playerArray); // ESP function
-        Sleep(1);  // Limit CPU usage
+        if (GetAsyncKeyState(VK_TAB) & 1) {
+            espEnabled = !espEnabled;
+            std::cout << (espEnabled ? "ESP Enabled!" : "ESP Disabled!") << std::endl;
+        }
+        if (GetAsyncKeyState(VK_F7) & 1) {
+            aimbotEnabled = !aimbotEnabled;
+            std::cout << (aimbotEnabled ? "Aimbot Enabled!" : "Aimbot Disabled!") << std::endl;
+        }
+        if (GetAsyncKeyState(VK_F2) & 1) {
+            flyEnabled = !flyEnabled;
+            std::cout << (flyEnabled ? "Fly Enabled!" : "Fly Disabled!") << std::endl;
+        }
+        if (GetAsyncKeyState(VK_CONTROL) & 1) {
+            rapidFireEnabled = !rapidFireEnabled;
+            std::cout << (rapidFireEnabled ? "Rapid Fire Enabled!" : "Rapid Fire Disabled!") << std::endl;
+        }
+
+        Sleep(50);  // Small delay to avoid high CPU usage
     }
 
     return 0;
