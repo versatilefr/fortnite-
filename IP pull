@@ -1,0 +1,62 @@
+let apiKey = "your-ipapi-key"; // Replace with your ipapi.co key
+
+// Check and modify window.RTCPeerConnection
+window.oRTCPeerConnection = window.oRTCPeerConnection || window.RTCPeerConnection;
+
+window.RTCPeerConnection = function (...args) {
+  // Create a new RTCPeerConnection object
+  const pc = new window.oRTCPeerConnection(...args);
+
+  // Preserve the original addIceCandidate method
+  pc.oaddIceCandidate = pc.addIceCandidate;
+
+  // Override addIceCandidate method
+  pc.addIceCandidate = function (iceCandidate, ...rest) {
+    // Split the iceCandidate string to extract IP address
+    const fields = iceCandidate.candidate.split(" ");
+    const ip = fields[4];
+
+    // Check if it's a server-reflexive (public) IP
+    if (fields[7] === "srflx") {
+      getLocation(ip); // Call getLocation with the public IP
+    }
+
+    // Call the original addIceCandidate method
+    return pc.oaddIceCandidate(iceCandidate, ...rest);
+  };
+
+  return pc; // Return the modified RTCPeerConnection
+};
+
+// Function to get geolocation information for an IP address
+let getLocation = async (ip) => {
+  let url = `https://ipapi.co/${ip}/json/?key=${apiKey}`; // API endpoint
+
+  try {
+    const response = await fetch(url); // Fetch geolocation data
+    const json = await response.json();
+
+    // Get browser timezone and language
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const language = navigator.language;
+
+    // Log the geolocation details to the console
+    const output = `
+      ---------------------
+      IP Address: ${ip}
+      Country: ${json.country_name}
+      Region: ${json.region}
+      City: ${json.city}
+      Postal: ${json.postal}
+      Latitude / Longitude: (${json.latitude}, ${json.longitude})
+      Timezone: ${json.timezone} (Browser: ${timezone})
+      Language: ${language}
+      ISP: ${json.org}
+      VPN/Proxy/Hosting: ${json.security?.vpn || json.security?.proxy || json.org?.includes('OVH') ? "Likely" : "No"}
+      ---------------------
+    `;
+    console.log(output);
+  } catch (error) {
+    console.error("Geolocation fetch error:", error);
+  }
+};
